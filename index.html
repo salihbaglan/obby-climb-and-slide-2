@@ -106,6 +106,19 @@
                     .then((unityInstance) => {
                         window.unityInstance = unityInstance
                         CANVAS.focus()
+                        // Auto-click to start the game
+                        setTimeout(function () {
+                            var rect = CANVAS.getBoundingClientRect();
+                            var cx = rect.left + rect.width / 2;
+                            var cy = rect.top + rect.height / 2;
+                            CANVAS.dispatchEvent(new MouseEvent('mousedown', { clientX: cx, clientY: cy, button: 0, buttons: 1, bubbles: true }));
+                            CANVAS.dispatchEvent(new MouseEvent('mouseup', { clientX: cx, clientY: cy, button: 0, buttons: 0, bubbles: true }));
+                            CANVAS.dispatchEvent(new MouseEvent('click', { clientX: cx, clientY: cy, button: 0, bubbles: true }));
+                            // Small movement
+                            setTimeout(function () {
+                                CANVAS.dispatchEvent(new MouseEvent('mousemove', { clientX: cx + 5, clientY: cy + 5, movementX: 5, movementY: 5, bubbles: true }));
+                            }, 100);
+                        }, 2000);
                         // Hide splash cover after 5 seconds
                         setTimeout(function () {
                             var cover = document.getElementById('splashCover');
@@ -753,6 +766,192 @@
                 })
         }
     </script>
+
+    <!-- Virtual Joysticks -->
+    <style>
+        .joystick-zone {
+            position: fixed;
+            bottom: 20px;
+            width: 160px;
+            height: 160px;
+            z-index: 10000;
+            touch-action: none;
+            pointer-events: auto;
+        }
+
+        .joystick-zone.left {
+            left: 30px;
+        }
+
+        .joystick-zone.right {
+            right: 30px;
+        }
+
+        .joystick-base {
+            width: 140px;
+            height: 140px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.12);
+            border: 2px solid rgba(255, 255, 255, 0.25);
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .joystick-thumb {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.4);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            transition: background 0.1s;
+        }
+
+        .joystick-thumb.active {
+            background: rgba(255, 255, 255, 0.6);
+        }
+
+        .joystick-label {
+            position: absolute;
+            top: -22px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 11px;
+            font-family: sans-serif;
+            white-space: nowrap;
+        }
+    </style>
+
+    <div class="joystick-zone left" id="joystickLeft">
+        <div class="joystick-label">MOVE</div>
+        <div class="joystick-base">
+            <div class="joystick-thumb" id="thumbLeft"></div>
+        </div>
+    </div>
+    <div class="joystick-zone right" id="joystickRight">
+        <div class="joystick-label">LOOK</div>
+        <div class="joystick-base">
+            <div class="joystick-thumb" id="thumbRight"></div>
+        </div>
+    </div>
+
+    <script>
+            (function () {
+                var canvas = document.getElementById('canvas');
+                var maxDist = 50;
+
+                // === Helper: Joystick setup ===
+                function setupJoystick(zoneId, thumbId, onMove, onEnd) {
+                    var zone = document.getElementById(zoneId);
+                    var thumb = document.getElementById(thumbId);
+                    var active = false;
+                    var center = { x: 0, y: 0 };
+                    var pointerId = null;
+
+                    zone.addEventListener('pointerdown', function (e) {
+                        if (active) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        active = true;
+                        pointerId = e.pointerId;
+                        zone.setPointerCapture(e.pointerId);
+                        var rect = zone.getBoundingClientRect();
+                        center.x = rect.left + rect.width / 2;
+                        center.y = rect.top + rect.height / 2;
+                        thumb.classList.add('active');
+                    });
+
+                    zone.addEventListener('pointermove', function (e) {
+                        if (!active || e.pointerId !== pointerId) return;
+                        e.preventDefault();
+                        var dx = e.clientX - center.x;
+                        var dy = e.clientY - center.y;
+                        var dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist > maxDist) { dx = dx / dist * maxDist; dy = dy / dist * maxDist; }
+                        thumb.style.transform = 'translate(calc(-50% + ' + dx + 'px), calc(-50% + ' + dy + 'px))';
+                        onMove(dx, dy, e);
+                    });
+
+                    function end(e) {
+                        if (!active || e.pointerId !== pointerId) return;
+                        active = false;
+                        pointerId = null;
+                        thumb.style.transform = 'translate(-50%, -50%)';
+                        thumb.classList.remove('active');
+                        onEnd();
+                    }
+                    zone.addEventListener('pointerup', end);
+                    zone.addEventListener('pointercancel', end);
+                }
+
+                // === LEFT JOYSTICK: WASD ===
+                var activeKeys = { w: false, a: false, s: false, d: false };
+
+                function fireKey(key, down) {
+                    var type = down ? 'keydown' : 'keyup';
+                    var codes = { w: 87, a: 65, s: 83, d: 68 };
+                    canvas.dispatchEvent(new KeyboardEvent(type, {
+                        key: key, code: 'Key' + key.toUpperCase(),
+                        keyCode: codes[key], which: codes[key],
+                        bubbles: true, cancelable: true
+                    }));
+                }
+
+                setupJoystick('joystickLeft', 'thumbLeft',
+                    function (dx, dy) {
+                        var threshold = 0.3;
+                        var nx = dx / maxDist, ny = dy / maxDist;
+                        var nw = ny < -threshold, ns = ny > threshold, na = nx < -threshold, nd = nx > threshold;
+                        if (nw !== activeKeys.w) { fireKey('w', nw); activeKeys.w = nw; }
+                        if (ns !== activeKeys.s) { fireKey('s', ns); activeKeys.s = ns; }
+                        if (na !== activeKeys.a) { fireKey('a', na); activeKeys.a = na; }
+                        if (nd !== activeKeys.d) { fireKey('d', nd); activeKeys.d = nd; }
+                    },
+                    function () {
+                        ['w', 'a', 's', 'd'].forEach(function (k) { if (activeKeys[k]) { fireKey(k, false); activeKeys[k] = false; } });
+                    }
+                );
+
+                // === RIGHT JOYSTICK: Camera (right-click drag) ===
+                var lastRx = 0, lastRy = 0, rightActive = false;
+
+                function sendMouse(type, mx, my, btn, btns) {
+                    var rect = canvas.getBoundingClientRect();
+                    canvas.dispatchEvent(new MouseEvent(type, {
+                        clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2,
+                        movementX: mx, movementY: my,
+                        button: btn, buttons: btns,
+                        bubbles: true, cancelable: true
+                    }));
+                }
+
+                setupJoystick('joystickRight', 'thumbRight',
+                    function (dx, dy, e) {
+                        if (!rightActive) {
+                            rightActive = true;
+                            lastRx = e.clientX; lastRy = e.clientY;
+                            sendMouse('mousedown', 0, 0, 2, 2);
+                        }
+                        var mx = e.clientX - lastRx, my = e.clientY - lastRy;
+                        lastRx = e.clientX; lastRy = e.clientY;
+                        sendMouse('mousemove', mx * 3, my * 3, 2, 2);
+                    },
+                    function () {
+                        if (rightActive) {
+                            rightActive = false;
+                            sendMouse('mouseup', 0, 0, 2, 2);
+                        }
+                    }
+                );
+            })();
+    </script>
+
 </body>
 
 </html>
